@@ -1,0 +1,11 @@
+.DS_Store
+node_modules/
+dist/
+.turbo/
+.tools/
+.sitefs/
+.sitefs-*/
+coverage/
+playwright-report/
+test-results/
+*.tsbuildinfo
