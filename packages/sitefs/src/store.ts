@@ -1,11 +1,29 @@
 import { cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { diffSnapshots, diffSnapshotsJson } from "./diff.js";
-import type { CrawlManifest } from "./types.js";
+import { diffSnapshots, diffSnapshotsJson } from "./snapshot-diff.js";
+import {
+  readConsoleLogFile,
+  readJsonFile,
+  readJsonFileOptional,
+  readTextFile,
+  readYamlFile
+} from "./snapshot-io.js";
 import { slugifyName, stringifyJson, stringifyYaml } from "./format.js";
-import type { FlowState, PageSnapshot, SiteFSStore as SiteFSStoreInterface, SnapshotId } from "./types.js";
+import type {
+  AxeViolationSummary,
+  ButtonInfo,
+  CrawlManifest,
+  FlowState,
+  FormInfo,
+  InputInfo,
+  LinkInfo,
+  NetworkLog,
+  PageSnapshot,
+  SnapshotId
+} from "./types.js";
+import type { SiteFSStore } from "./types/store.js";
 
-export class LocalSiteFSStore implements SiteFSStoreInterface {
+export class LocalSiteFSStore implements SiteFSStore {
   readonly root: string;
 
   constructor(root: string) {
@@ -64,17 +82,17 @@ export class LocalSiteFSStore implements SiteFSStoreInterface {
         readFile(join(base, "title.txt"), "utf8"),
         readFile(join(base, "visible_text.txt"), "utf8"),
         readFile(join(base, "summary.md"), "utf8"),
-        readJson(join(base, "links.json")),
-        readJson(join(base, "buttons.json")),
-        readJson(join(base, "forms.json")),
-        readJson(join(base, "inputs.json")),
-        readConsole(join(base, "console.log")),
-        readJson(join(base, "network.json")),
-        readJson(join(base, "dom.json")),
-        readYamlFallback(join(base, "a11y.yaml")),
-        readJsonOptional(join(base, "a11y-axe.json")),
-        readTextOptional(join(base, "screenshot.sha256")),
-        readTextOptional(join(base, "timestamp.txt"))
+        readJsonFile<LinkInfo[]>(join(base, "links.json")),
+        readJsonFile<ButtonInfo[]>(join(base, "buttons.json")),
+        readJsonFile<FormInfo[]>(join(base, "forms.json")),
+        readJsonFile<InputInfo[]>(join(base, "inputs.json")),
+        readConsoleLogFile(join(base, "console.log")),
+        readJsonFile<NetworkLog[]>(join(base, "network.json")),
+        readJsonFile<unknown>(join(base, "dom.json")),
+        readYamlFile(join(base, "a11y.yaml")),
+        readJsonFileOptional<AxeViolationSummary[]>(join(base, "a11y-axe.json")),
+        readTextFile(join(base, "screenshot.sha256")).catch(() => null),
+        readTextFile(join(base, "timestamp.txt")).catch(() => null)
       ]);
     return {
       id,
@@ -284,34 +302,5 @@ export class LocalSiteFSStore implements SiteFSStoreInterface {
 
   async copyCurrentToPage(name: string): Promise<void> {
     await cp(this.path("current"), this.path("pages", slugifyName(name)), { recursive: true, force: true });
-  }
-}
-
-async function readJson(path: string): Promise<any> {
-  return JSON.parse(await readFile(path, "utf8"));
-}
-
-async function readConsole(path: string): Promise<any[]> {
-  const text = await readFile(path, "utf8");
-  return text.trim() ? text.trim().split(/\r?\n/).map((line) => ({ type: line.includes("ERROR") ? "error" : "log", text: line, timestamp: "" })) : [];
-}
-
-async function readYamlFallback(path: string): Promise<unknown> {
-  return readFile(path, "utf8");
-}
-
-async function readJsonOptional(path: string): Promise<any | null> {
-  try {
-    return JSON.parse(await readFile(path, "utf8"));
-  } catch {
-    return null;
-  }
-}
-
-async function readTextOptional(path: string): Promise<string | null> {
-  try {
-    return await readFile(path, "utf8");
-  } catch {
-    return null;
   }
 }

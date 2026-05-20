@@ -2,44 +2,15 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { stringifyJson } from "./format.js";
+import type { RunRegistryIndex, SiteRunRecord } from "./types/run.js";
+import { originHashFromUrl } from "./url.js";
 
-export interface SiteRunRecord {
-  runId: string;
-  origin: string;
-  sessionRoot: string;
-  siteRoot: string;
-  startedAt: string;
-  finishedAt: string;
-  startUrl: string;
-  passed?: boolean;
-  pageCount: number;
-  historyRange?: [string, string];
-}
-
-export interface RunRegistryIndex {
-  origins: Record<string, SiteRunRecord[]>;
-}
+export type { SiteRunRecord, RunRegistryIndex } from "./types/run.js";
 
 export function getRegistryDir(): string {
   const override = process.env.SITEFS_REGISTRY_DIR?.trim();
   if (override) return resolve(override);
   return join(homedir(), ".sitefs", "runs");
-}
-
-export function originHashFromUrl(url: string): string {
-  return normalizeOrigin(url);
-}
-
-export function normalizeOrigin(url: string): string {
-  const parsed = new URL(url);
-  return parsed.origin.toLowerCase();
-}
-
-export function normalizePageUrl(url: string): string {
-  const parsed = new URL(url);
-  parsed.hash = "";
-  const href = parsed.href.replace(/\/$/, "") || parsed.origin;
-  return href;
 }
 
 export async function loadRegistryIndex(registryDir = getRegistryDir()): Promise<RunRegistryIndex> {

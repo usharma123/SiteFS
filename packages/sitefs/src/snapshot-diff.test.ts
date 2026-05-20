@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { buildStructuralDiff, diffSnapshots } from "./diff.js";
+import { buildStructuralDiff, diffSnapshots } from "./snapshot-diff.js";
 import type { PageSnapshot } from "./types.js";
 
 describe("diffSnapshots", () => {

@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { LocalSiteFSStore } from "./store.js";
-import { loadRegistryIndex, registerRun, getPreviousRun, normalizePageUrl } from "./registry.js";
+import { loadRegistryIndex, registerRun, getPreviousRun } from "./registry.js";
+import { normalizePageUrl } from "./url.js";
 
 describe("run registry", () => {
   it("registers runs per origin and returns previous run", async () => {
