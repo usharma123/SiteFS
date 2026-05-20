@@ -10,6 +10,8 @@
     "test": "tsc -p tsconfig.json && node --test dist/**/*.test.js"
   },
   "dependencies": {
+    "@axe-core/playwright": "^4.10.2",
+    "@sitefs/axfs": "workspace:*",
     "@sitefs/sitefs": "workspace:*",
     "playwright": "^1.52.0"
   }
