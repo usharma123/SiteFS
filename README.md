@@ -7,6 +7,22 @@ SiteFS is a CLI-first QA agent runtime with **two layers**:
 
 Playwright controls Chromium in a worker process (multi-tab). Write actions can auto-snapshot to `/site/current`.
 
+See [ARCHITECTURE.md](ARCHITECTURE.md) for package boundaries, session layout, and the worker JSON-RPC protocol.
+
+## Packages
+
+| Package | Role |
+|---------|------|
+| `packages/cli` (`sitefs`) | Thin CLI entrypoints: shell, MCP, test, view, doctor |
+| `@sitefs/session` | `createSessionContext()` — store, worker backend, `WebRuntime`, `BrowserHost` |
+| `@sitefs/live` | Live AX shell (`BrowserHost`) and command dispatch |
+| `@sitefs/commands` | Shared live command registry for shell, host, and MCP |
+| `@sitefs/browser` | Playwright backend + browser worker subprocess |
+| `@sitefs/sitefs` | Session disk layout, snapshots, registry, viewer manifest |
+| `@sitefs/axfs` | CDP accessibility tree → virtual filesystem |
+| `@sitefs/qa` | QA checks and report builders |
+| `@sitefs/viewer` | Local viewer UI for runs and diffs |
+
 ## Bootstrap
 
 This repo does not require global `npm`, `pnpm`, or `corepack`.
