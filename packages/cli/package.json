@@ -14,10 +14,13 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@sitefs/axfs": "workspace:*",
     "@sitefs/browser": "workspace:*",
     "@sitefs/qa": "workspace:*",
     "@sitefs/sitefs": "workspace:*",
+    "@sitefs/viewer": "workspace:*",
     "just-bash": "^3.0.1",
+    "tsx": "^4.19.4",
     "zod": "^4.4.3"
   }
 }
