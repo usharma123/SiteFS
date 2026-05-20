@@ -1,5 +1,6 @@
 export * from "./extractors.js";
 export * from "./playwright-backend.js";
+export { WorkerBrowserBackend } from "./worker/worker-backend.js";
 export type {
   BrowserBackend,
   BrowserBackendOptions,

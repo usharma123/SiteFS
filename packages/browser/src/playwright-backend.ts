@@ -8,8 +8,16 @@ import {
   type Request,
   type Response
 } from "playwright";
-import { AxeBuilder } from "@axe-core/playwright";
-import type { AxeViolationSummary, ConsoleLog, LinkProbeResult, NetworkLog, PageSnapshot } from "@sitefs/sitefs";
+import type { ConsoleLog, LinkProbeResult, NetworkLog, PageSnapshot } from "@sitefs/sitefs";
+import { getAccessibilityTree, runAxe } from "./playwright/a11y.js";
+import {
+  browserUserAgent,
+  buildSummary,
+  escapeRegex,
+  formatConsoleLocation,
+  isBlockedLink,
+  windowLikeHeight
+} from "./playwright/constants.js";
 import { extractorScript } from "./extractors.js";
 import type {
   BrowserBackendOptions,
@@ -20,11 +28,6 @@ import type {
   WaitAxOptions,
   WindowInfo
 } from "./types.js";
-
-const blockedStatuses = new Set([403, 999]);
-const blockedHostPatterns = [/linkedin\.com/i, /twitter\.com/i, /x\.com/i];
-const browserUserAgent =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 interface TabRecord {
   id: number;
@@ -217,7 +220,7 @@ export class PlaywrightBrowserBackend implements LiveBrowserBackend {
 
   async refreshAxTree(): Promise<unknown> {
     const page = await this.ensurePage();
-    return this.getAccessibilityTree(page);
+    return getAccessibilityTree(page);
   }
 
   async evaluateJs(expression: string, allowWrite = true): Promise<unknown> {
@@ -278,9 +281,9 @@ export class PlaywrightBrowserBackend implements LiveBrowserBackend {
       page.title(),
       Promise.resolve(page.url()),
       page.evaluate(extractorScript),
-      this.getAccessibilityTree(page),
+      getAccessibilityTree(page),
       page.screenshot({ fullPage: true }),
-      this.runAxe(page)
+      runAxe(page)
     ]);
 
     const screenshotSha256 = screenshotBuffer
@@ -484,77 +487,4 @@ export class PlaywrightBrowserBackend implements LiveBrowserBackend {
     await page.waitForTimeout(150);
   }
 
-  private async getAccessibilityTree(page: Page): Promise<unknown> {
-    try {
-      const session = await page.context().newCDPSession(page);
-      await session.send("Accessibility.enable");
-      const result = await session.send("Accessibility.getFullAXTree");
-      await session.detach();
-      return result;
-    } catch (error) {
-      return { error: error instanceof Error ? error.message : String(error) };
-    }
-  }
-
-  private async runAxe(page: Page): Promise<AxeViolationSummary[]> {
-    try {
-      const results = await new AxeBuilder({ page }).analyze();
-      return results.violations.map((violation) => ({
-        id: violation.id,
-        impact: violation.impact ?? undefined,
-        description: violation.description,
-        help: violation.help,
-        nodes: violation.nodes.length
-      }));
-    } catch {
-      return [];
-    }
-  }
-}
-
-const windowLikeHeight = 700;
-
-function isBlockedLink(href: string, status?: number): boolean {
-  if (status !== undefined && blockedStatuses.has(status)) return true;
-  try {
-    const host = new URL(href).hostname;
-    return blockedHostPatterns.some((pattern) => pattern.test(host));
-  } catch {
-    return false;
-  }
-}
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function formatConsoleLocation(message: ConsoleMessage): string | undefined {
-  const location = message.location();
-  return location.url ? `${location.url}:${location.lineNumber}:${location.columnNumber}` : undefined;
-}
-
-function buildSummary(url: string, title: string, extracted: ReturnType<typeof extractorScript>): string {
-  const visibleControls = [
-    ...extracted.inputs.map((input) => `${input.label || input.name || input.type} input`),
-    ...extracted.buttons.map((button) => `${button.text || button.selector} button`),
-    ...extracted.links.slice(0, 12).map((link) => `${link.text || link.href} link`)
-  ];
-  const warnings = [
-    extracted.a11yIssues.length ? `${extracted.a11yIssues.length} accessibility issue(s)` : "No accessibility issues from MVP checks"
-  ];
-  return [
-    "# Current Page",
-    "",
-    `URL: ${url}`,
-    `Title: ${title}`,
-    "",
-    "Visible controls:",
-    ...(visibleControls.length ? visibleControls.map((item) => `- ${item}`) : ["- None detected"]),
-    "",
-    "Detected forms:",
-    ...(extracted.forms.length ? extracted.forms.map((form) => `- ${form.name}`) : ["- None detected"]),
-    "",
-    "Warnings:",
-    ...warnings.map((warning) => `- ${warning}`)
-  ].join("\n") + "\n";
 }
