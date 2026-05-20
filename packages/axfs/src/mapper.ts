@@ -1,5 +1,5 @@
 import type { AxCdpNode, AxCdpTree, AxEntry, AxFilesystem } from "./types.js";
-import { CONTAINER_ROLES } from "./types.js";
+import { CONTAINER_ROLES, TYPE_ALIASES } from "./types.js";
 import { dedupeSegment, generateSegment } from "./naming.js";
 
 export function buildAxFilesystem(cdp: AxCdpTree | unknown): AxFilesystem {
@@ -181,16 +181,5 @@ export function listChildren(entry: AxEntry, opts: import("./types.js").ListOpti
 
 export function matchTypeFilter(type: string): string[] {
   const lower = type.toLowerCase();
-  const aliases: Record<string, string[]> = {
-    input: ["textbox", "searchbox", "spinbutton", "combobox"],
-    button: ["button"],
-    link: ["link"],
-    dropdown: ["combobox", "listbox"],
-    nav: ["navigation"],
-    toggle: ["switch", "checkbox", "radio"],
-    modal: ["dialog", "alertdialog"],
-    image: ["img", "image"],
-    heading: ["heading"]
-  };
-  return aliases[lower] ?? [lower];
+  return TYPE_ALIASES[lower] ?? [lower];
 }
