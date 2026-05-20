@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, it } from "node:test";
-import { LocalSiteFSStore, type PageSnapshot } from "@sitefs/sitefs";
+import { defaultSessionConfig, LocalSiteFSStore, type PageSnapshot } from "@sitefs/sitefs";
 import { WebRuntime } from "./runtime.js";
 
 describe("WebRuntime", () => {
@@ -14,11 +14,25 @@ describe("WebRuntime", () => {
       await store.init();
       await store.writeHistory(snapshot("Before"));
       await store.writeHistory(snapshot("After"));
-      const runtime = new WebRuntime(fakeBackend(), store);
+      const runtime = new WebRuntime(fakeBackend(), store, { config: defaultSessionConfig });
 
       const output = await runtime.handle(["diff", "latest"]);
       assert.match(output, /# UI Diff/);
       assert.match(output, /After/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("web report includes probeLink warnings", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sitefs-report-"));
+    try {
+      const store = new LocalSiteFSStore(root);
+      await store.init();
+      await store.writeCurrent(snapshot("Page"));
+      const runtime = new WebRuntime(fakeBackend(), store, { config: defaultSessionConfig });
+      const output = await runtime.handle(["report"]);
+      assert.match(output, /qa-summary/);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -29,7 +43,7 @@ describe("WebRuntime", () => {
     try {
       const store = new LocalSiteFSStore(root);
       await store.init();
-      const runtime = new WebRuntime(fakeBackend(), store);
+      const runtime = new WebRuntime(fakeBackend(), store, { config: defaultSessionConfig });
 
       const output = await runtime.handle(["current"]);
       assert.match(output, /No current snapshot exists yet/);
@@ -49,6 +63,7 @@ function fakeBackend() {
     back: async () => {},
     forward: async () => {},
     snapshot: async () => snapshot("Current"),
+    probeLink: async () => ({ ok: true, status: 200 }),
     close: async () => {}
   };
 }
@@ -72,4 +87,3 @@ function snapshot(text: string): PageSnapshot {
     timestamp: new Date().toISOString()
   };
 }
-

@@ -55,8 +55,13 @@ async function browserCheck(): Promise<Check> {
   const backend = new WorkerBrowserBackend({ headed: false });
   try {
     await backend.open("data:text/html,%3Ctitle%3ESiteFS%20Doctor%3C/title%3E%3Cp%3Eok%3C/p%3E");
+    const snapshot = await backend.snapshot();
+    const ax = await backend.refreshAxTree();
+    const axNodes = Array.isArray((ax as { nodes?: unknown[] })?.nodes) ? (ax as { nodes: unknown[] }).nodes.length : 0;
+    const tabs = await backend.listTabs();
     await backend.close();
-    return { name: "browser", ok: true, detail: "Chromium launched" };
+    const detail = `Chromium launched; snapshot title="${snapshot.title}", links=${snapshot.links.length}, buttons=${snapshot.buttons.length}, axNodes=${axNodes}, tabs=${tabs.length}`;
+    return { name: "browser", ok: true, detail };
   } catch (error) {
     await backend.close().catch(() => {});
     const message = errorMessage(error);
@@ -74,4 +79,3 @@ async function browserCheck(): Promise<Check> {
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
-
