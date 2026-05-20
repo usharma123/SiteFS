@@ -1,6 +1,7 @@
 import { cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { diffSnapshots } from "./diff.js";
+import { diffSnapshots, diffSnapshotsJson } from "./diff.js";
+import type { CrawlManifest } from "./types.js";
 import { slugifyName, stringifyJson, stringifyYaml } from "./format.js";
 import type { FlowState, PageSnapshot, SiteFSStore as SiteFSStoreInterface, SnapshotId } from "./types.js";
 
@@ -18,8 +19,10 @@ export class LocalSiteFSStore implements SiteFSStoreInterface {
       mkdir(this.path("history"), { recursive: true }),
       mkdir(this.path("pages"), { recursive: true }),
       mkdir(this.path("flows"), { recursive: true }),
-      mkdir(this.path("reports"), { recursive: true })
+      mkdir(this.path("reports"), { recursive: true }),
+      mkdir(this.path("crawl"), { recursive: true })
     ]);
+    await this.refreshSessionReadme();
   }
 
   path(...parts: string[]): string {
@@ -28,6 +31,7 @@ export class LocalSiteFSStore implements SiteFSStoreInterface {
 
   async writeCurrent(snapshot: PageSnapshot): Promise<void> {
     await this.writeSnapshotDir("current", { ...snapshot, id: "current", screenshotPath: "screenshot.png" });
+    await this.refreshSessionReadme();
   }
 
   async writeHistory(snapshot: PageSnapshot): Promise<SnapshotId> {
@@ -54,20 +58,24 @@ export class LocalSiteFSStore implements SiteFSStoreInterface {
 
   async readSnapshot(id: SnapshotId | "current"): Promise<PageSnapshot> {
     const base = id === "current" ? this.path("current") : this.path("history", id);
-    const [url, title, visibleText, summary, links, buttons, forms, inputs, consoleLogs, networkLogs, dom, accessibilityTree] = await Promise.all([
-      readFile(join(base, "url.txt"), "utf8"),
-      readFile(join(base, "title.txt"), "utf8"),
-      readFile(join(base, "visible_text.txt"), "utf8"),
-      readFile(join(base, "summary.md"), "utf8"),
-      readJson(join(base, "links.json")),
-      readJson(join(base, "buttons.json")),
-      readJson(join(base, "forms.json")),
-      readJson(join(base, "inputs.json")),
-      readConsole(join(base, "console.log")),
-      readJson(join(base, "network.json")),
-      readJson(join(base, "dom.json")),
-      readYamlFallback(join(base, "a11y.yaml"))
-    ]);
+    const [url, title, visibleText, summary, links, buttons, forms, inputs, consoleLogs, networkLogs, dom, accessibilityTree, axeViolations, screenshotSha256, timestamp] =
+      await Promise.all([
+        readFile(join(base, "url.txt"), "utf8"),
+        readFile(join(base, "title.txt"), "utf8"),
+        readFile(join(base, "visible_text.txt"), "utf8"),
+        readFile(join(base, "summary.md"), "utf8"),
+        readJson(join(base, "links.json")),
+        readJson(join(base, "buttons.json")),
+        readJson(join(base, "forms.json")),
+        readJson(join(base, "inputs.json")),
+        readConsole(join(base, "console.log")),
+        readJson(join(base, "network.json")),
+        readJson(join(base, "dom.json")),
+        readYamlFallback(join(base, "a11y.yaml")),
+        readJsonOptional(join(base, "a11y-axe.json")),
+        readTextOptional(join(base, "screenshot.sha256")),
+        readTextOptional(join(base, "timestamp.txt"))
+      ]);
     return {
       id,
       url: url.trim(),
@@ -83,7 +91,9 @@ export class LocalSiteFSStore implements SiteFSStoreInterface {
       consoleLogs,
       networkLogs,
       screenshotPath: join(base, "screenshot.png"),
-      timestamp: ""
+      timestamp: timestamp?.trim() || "",
+      axeViolations: axeViolations ?? undefined,
+      screenshotSha256: screenshotSha256?.trim() || undefined
     };
   }
 
@@ -91,7 +101,51 @@ export class LocalSiteFSStore implements SiteFSStoreInterface {
     const [before, after] = await Promise.all([this.readSnapshot(beforeId), this.readSnapshot(afterId)]);
     const diff = diffSnapshots(before, after);
     await this.writeReport(`diff-${beforeId}-${afterId}.md`, diff);
+    await this.writeReport(`diff-${beforeId}-${afterId}.json`, diffSnapshotsJson(before, after));
     return diff;
+  }
+
+  async writeCrawlManifest(manifest: CrawlManifest): Promise<void> {
+    await mkdir(this.path("crawl"), { recursive: true });
+    await writeFile(this.path("crawl", "manifest.json"), stringifyJson(manifest), "utf8");
+    await this.refreshSessionReadme();
+  }
+
+  async refreshSessionReadme(): Promise<void> {
+    let currentUrl = "(none)";
+    let currentTitle = "(none)";
+    try {
+      const current = await this.readSnapshot("current");
+      currentUrl = current.url;
+      currentTitle = current.title;
+    } catch {
+      // no snapshot yet
+    }
+    const history = await this.listHistory();
+    const flow = await this.getActiveFlow();
+    const readme = [
+      "# SiteFS Session",
+      "",
+      `Current URL: ${currentUrl}`,
+      `Current title: ${currentTitle}`,
+      `History snapshots: ${history.length}${history.length ? ` (latest: ${history.at(-1)})` : ""}`,
+      flow ? `Active flow: ${flow.name}` : "Active flow: none",
+      "",
+      "## Key paths",
+      "- `/site/current/visible_text.txt` — visible page text",
+      "- `/site/current/links.json` — detected links",
+      "- `/site/current/buttons.json` — detected buttons",
+      "- `/site/reports/qa-summary.md` — latest QA report",
+      "- `/site/reports/qa-summary.json` — QA report (JSON)",
+      "- `/site/crawl/manifest.json` — crawl results (if run)",
+      "",
+      "## Commands",
+      "- `web report` / `web check-all` — full QA checks",
+      "- `web crawl [url]` — BFS same-origin crawl",
+      "- `web diff latest` — diff last two snapshots",
+      "- `web diff-visual latest` — visual screenshot diff"
+    ].join("\n");
+    await writeFile(this.path("README.md"), `${readme}\n`, "utf8");
   }
 
   async startFlow(name: string): Promise<FlowState> {
@@ -199,9 +253,11 @@ export class LocalSiteFSStore implements SiteFSStoreInterface {
     await mkdir(dir, { recursive: true });
 
     const screenshotBuffer = snapshot.screenshotBuffer;
-    const jsonSnapshot = { ...snapshot, screenshotBuffer: undefined };
+    const timestamp = snapshot.timestamp || new Date().toISOString();
+    const jsonSnapshot = { ...snapshot, screenshotBuffer: undefined, timestamp };
     await Promise.all([
       writeFile(join(dir, "url.txt"), `${snapshot.url}\n`, "utf8"),
+      writeFile(join(dir, "timestamp.txt"), `${timestamp}\n`, "utf8"),
       writeFile(join(dir, "title.txt"), `${snapshot.title}\n`, "utf8"),
       writeFile(join(dir, "visible_text.txt"), snapshot.visibleText, "utf8"),
       writeFile(join(dir, "summary.md"), snapshot.summary, "utf8"),
@@ -213,7 +269,13 @@ export class LocalSiteFSStore implements SiteFSStoreInterface {
       writeFile(join(dir, "inputs.json"), stringifyJson(snapshot.inputs), "utf8"),
       writeFile(join(dir, "console.log"), snapshot.consoleLogs.map((entry) => `[${entry.timestamp}] ${entry.type.toUpperCase()} ${entry.text}`).join("\n") + "\n", "utf8"),
       writeFile(join(dir, "network.json"), stringifyJson(snapshot.networkLogs), "utf8"),
-      writeFile(join(dir, "snapshot.json"), stringifyJson(jsonSnapshot), "utf8")
+      writeFile(join(dir, "snapshot.json"), stringifyJson(jsonSnapshot), "utf8"),
+      snapshot.axeViolations?.length
+        ? writeFile(join(dir, "a11y-axe.json"), stringifyJson(snapshot.axeViolations), "utf8")
+        : Promise.resolve(),
+      snapshot.screenshotSha256
+        ? writeFile(join(dir, "screenshot.sha256"), `${snapshot.screenshotSha256}\n`, "utf8")
+        : Promise.resolve()
     ]);
     if (screenshotBuffer) {
       await writeFile(join(dir, "screenshot.png"), screenshotBuffer);
@@ -236,4 +298,20 @@ async function readConsole(path: string): Promise<any[]> {
 
 async function readYamlFallback(path: string): Promise<unknown> {
   return readFile(path, "utf8");
+}
+
+async function readJsonOptional(path: string): Promise<any | null> {
+  try {
+    return JSON.parse(await readFile(path, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+async function readTextOptional(path: string): Promise<string | null> {
+  try {
+    return await readFile(path, "utf8");
+  } catch {
+    return null;
+  }
 }

@@ -52,6 +52,21 @@ export interface NetworkLog {
   timestamp: string;
 }
 
+export interface LinkProbeResult {
+  status?: number;
+  ok: boolean;
+  blocked?: boolean;
+  error?: string;
+}
+
+export interface AxeViolationSummary {
+  id: string;
+  impact?: string;
+  description: string;
+  help: string;
+  nodes: number;
+}
+
 export interface PageSnapshot {
   id: SnapshotId;
   url: string;
@@ -69,6 +84,22 @@ export interface PageSnapshot {
   screenshotPath: string;
   timestamp: string;
   screenshotBuffer?: Uint8Array;
+  screenshotSha256?: string;
+  axeViolations?: AxeViolationSummary[];
+}
+
+export interface CrawlManifestEntry {
+  url: string;
+  slug: string;
+  snapshotId?: SnapshotId;
+  title: string;
+}
+
+export interface CrawlManifest {
+  startedAt: string;
+  startUrl: string;
+  maxPages: number;
+  pages: CrawlManifestEntry[];
 }
 
 export interface Issue {
