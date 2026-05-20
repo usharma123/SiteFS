@@ -1,6 +1,6 @@
 import { access, mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
-import { WorkerBrowserBackend } from "./worker-backend.js";
+import { WorkerBrowserBackend } from "@sitefs/browser";
 
 export interface DoctorOptions {
   sessionRoot: string;

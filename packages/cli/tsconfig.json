@@ -9,7 +9,11 @@
   "references": [
     { "path": "../sitefs" },
     { "path": "../qa" },
-    { "path": "../browser" }
+    { "path": "../browser" },
+    { "path": "../axfs" },
+    { "path": "../commands" },
+    { "path": "../live" },
+    { "path": "../session" }
   ]
 }
 

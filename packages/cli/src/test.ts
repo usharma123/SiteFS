@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { loadSessionConfig, LocalSiteFSStore } from "@sitefs/sitefs";
 import { runAllChecks, buildQAReport } from "@sitefs/qa";
 import { WebRuntime } from "./runtime.js";
-import { WorkerBrowserBackend } from "./worker-backend.js";
+import { WorkerBrowserBackend } from "@sitefs/browser";
 import { finalizeAndOpenViewer } from "./viewer-host.js";
 
 export interface TestOptions {

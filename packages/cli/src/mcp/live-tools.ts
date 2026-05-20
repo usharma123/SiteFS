@@ -2,10 +2,10 @@ import { readFile } from "node:fs/promises";
 import { normalize, resolve, sep } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { BrowserHost } from "./browser-host.js";
-import type { WebRuntime } from "./runtime.js";
+import type { WorkerBrowserBackend } from "@sitefs/browser";
 import type { LocalSiteFSStore } from "@sitefs/sitefs";
-import type { WorkerBrowserBackend } from "./worker-backend.js";
+import type { BrowserHost } from "@sitefs/live";
+import type { WebRuntime } from "@sitefs/session";
 import { buildQAReport, renderMarkdownReport, runAllChecks } from "@sitefs/qa";
 
 export interface McpSecurity {

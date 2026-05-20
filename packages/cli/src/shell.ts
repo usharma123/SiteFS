@@ -1,12 +1,8 @@
-import { mkdir } from "node:fs/promises";
-import { resolve } from "node:path";
 import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { Bash, defineCommand, InMemoryFs, MountableFs, ReadWriteFs } from "just-bash";
-import { loadSessionConfig, LocalSiteFSStore } from "@sitefs/sitefs";
-import { BrowserHost } from "./browser-host.js";
-import { WebRuntime } from "./runtime.js";
-import { WorkerBrowserBackend } from "./worker-backend.js";
+import { LIVE_COMMAND_NAMES } from "@sitefs/commands";
+import { createSessionWiring } from "./bootstrap.js";
 
 export interface ShellOptions {
   sessionRoot: string;
@@ -16,77 +12,15 @@ export interface ShellOptions {
   allowSensitive?: boolean;
 }
 
-const LIVE_COMMANDS = [
-  "tabs",
-  "windows",
-  "here",
-  "navigate",
-  "goto",
-  "open",
-  "back",
-  "forward",
-  "close",
-  "ls",
-  "cd",
-  "pwd",
-  "tree",
-  "refresh",
-  "cat",
-  "text",
-  "read",
-  "grep",
-  "find",
-  "extract_links",
-  "extract_table",
-  "click",
-  "focus",
-  "type",
-  "submit",
-  "scroll",
-  "select",
-  "wait",
-  "js",
-  "eval",
-  "screenshot",
-  "diff",
-  "watch",
-  "for",
-  "each",
-  "script",
-  "functions",
-  "call",
-  "whoami",
-  "env",
-  "export",
-  "history",
-  "bookmark",
-  "debug",
-  "help",
-  "clear",
-  "web"
-] as const;
+const LIVE_COMMANDS = LIVE_COMMAND_NAMES;
 
 export async function runShell(options: ShellOptions): Promise<void> {
-  const sessionRoot = resolve(options.sessionRoot);
-  const siteRoot = resolve(sessionRoot, "site");
-  await mkdir(siteRoot, { recursive: true });
-
-  const store = new LocalSiteFSStore(siteRoot);
-  await store.init();
-
-  const config = await loadSessionConfig(sessionRoot);
-  const backend = new WorkerBrowserBackend({
+  const { siteRoot, host } = await createSessionWiring({
+    sessionRoot: options.sessionRoot,
     headed: options.headed,
-    waitUntil: config.waitUntil,
-    networkIdleTimeoutMs: config.networkIdleTimeoutMs,
-    userDataDir: config.userDataDir
-  });
-  const web = new WebRuntime(backend, store, { config, sessionRoot, openViewerOnCheckAll: true });
-  const host = new BrowserHost(backend, store, web, {
-    sessionRoot,
-    config,
-    allowWrite: options.allowWrite ?? config.allowWrite,
-    allowSensitive: options.allowSensitive ?? config.allowSensitive
+    allowWrite: options.allowWrite,
+    allowSensitive: options.allowSensitive,
+    openViewerOnCheckAll: true
   });
 
   const customCommands = LIVE_COMMANDS.map((name) =>
