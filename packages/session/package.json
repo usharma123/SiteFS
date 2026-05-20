@@ -1,0 +1,19 @@
+{
+  "name": "@sitefs/session",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsc -p tsconfig.json && node --test dist/**/*.test.js"
+  },
+  "dependencies": {
+    "@sitefs/browser": "workspace:*",
+    "@sitefs/live": "workspace:*",
+    "@sitefs/qa": "workspace:*",
+    "@sitefs/sitefs": "workspace:*",
+    "@sitefs/viewer": "workspace:*"
+  }
+}

@@ -1,0 +1,428 @@
+import { writeFile } from "node:fs/promises";
+import type { BrowserBackend } from "@sitefs/browser";
+import {
+  buildQAReport,
+  checkA11y,
+  checkAxeViolations,
+  checkButtons,
+  checkConsoleErrors,
+  checkForms,
+  renderJsonReport,
+  renderMarkdownReport,
+  runAllChecks,
+  runStaticChecks
+} from "@sitefs/qa";
+import {
+  detectDangerousAction,
+  diffVisualFromPaths,
+  LocalSiteFSStore,
+  pageSlugFromUrl,
+  slugifyName,
+  type CrawlManifest,
+  type CrawlManifestEntry,
+  type PageSnapshot,
+  type SessionConfig
+} from "@sitefs/sitefs";
+import { finalizeAndOpenViewer } from "../viewer-host.js";
+import {
+  formatRuntimeError,
+  helpText,
+  matches,
+  normalizeUrl,
+  renderIssueReport,
+  required,
+  sameOrigin
+} from "./help.js";
+
+export interface WebRuntimeOptions {
+  config: SessionConfig;
+  sessionRoot?: string;
+  openViewerOnCheckAll?: boolean;
+}
+
+export class WebRuntime {
+  constructor(
+    private readonly backend: BrowserBackend,
+    private readonly store: LocalSiteFSStore,
+    private readonly options: WebRuntimeOptions
+  ) {}
+
+  async handle(args: string[]): Promise<string> {
+    const [command, ...rest] = args;
+    if (!command || command === "help" || command === "--help") return helpText();
+
+    try {
+      switch (command) {
+        case "open":
+          return await this.open(rest);
+        case "click": {
+          const target = required(rest.join(" "), "web click <text-or-selector>");
+          const blocked = this.guard(target);
+          if (blocked) return blocked;
+          return await this.action("Clicked", `click ${target}`, async () => this.backend.click(target));
+        }
+        case "type": {
+          const [target, ...valueParts] = rest;
+          const value = valueParts.join(" ");
+          required(target, "web type <label-or-selector> <value>");
+          required(value, "web type <label-or-selector> <value>");
+          const blocked = this.guard(target);
+          if (blocked) return blocked;
+          return await this.action("Typed", `type ${target}`, async () => this.backend.type(target, value));
+        }
+        case "scroll": {
+          const direction = rest[0] === "up" ? "up" : "down";
+          return await this.action("Scrolled", `scroll ${direction}`, async () => this.backend.scroll(direction));
+        }
+        case "wait": {
+          const ms = Number(rest[0] ?? 1000);
+          if (!Number.isFinite(ms) || ms < 0) throw new Error("web wait <ms> requires a positive millisecond value");
+          return await this.action("Waited", `wait ${ms}`, async () => this.backend.wait(ms));
+        }
+        case "back":
+          return await this.action("Went back", "back", async () => this.backend.back());
+        case "forward":
+          return await this.action("Went forward", "forward", async () => this.backend.forward());
+        case "snapshot":
+          return await this.snapshotAndPersist("manual snapshot");
+        case "history":
+          return await this.history();
+        case "current":
+          return await this.current();
+        case "diff":
+          return await this.diff(rest[0], rest[1]);
+        case "diff-visual":
+          return await this.diffVisual(rest[0], rest[1]);
+        case "inspect":
+          return await this.inspect(required(rest.join(" "), "web inspect <selector-or-text>"));
+        case "save-page":
+          return await this.savePage(required(rest[0], "web save-page <name>"));
+        case "check-console-errors":
+          return await this.checkConsoleErrors();
+        case "check-broken-links":
+          return await this.checkBrokenLinks(rest.includes("--all-links"));
+        case "check-a11y":
+          return await this.checkA11y();
+        case "check-forms":
+          return await this.checkForms();
+        case "check-buttons":
+          return await this.checkButtons();
+        case "check-all":
+          return await this.checkAll();
+        case "report":
+          return await this.report();
+        case "crawl":
+          return await this.crawl(rest);
+        case "flow":
+          return await this.flow(rest);
+        default:
+          return `web: unknown command "${command}"\n\n${helpText()}`;
+      }
+    } catch (error) {
+      return `web: ${formatRuntimeError(error)}\n`;
+    }
+  }
+
+  async close(): Promise<void> {
+    await this.backend.close();
+  }
+
+  private async open(args: string[]): Promise<string> {
+    const waitForIndex = args.indexOf("--wait-for");
+    let waitForSelector: string | undefined;
+    const urlParts = [...args];
+    if (waitForIndex >= 0) {
+      waitForSelector = required(urlParts[waitForIndex + 1], "web open <url> --wait-for <selector>");
+      urlParts.splice(waitForIndex, 2);
+    }
+    const url = required(urlParts[0], "web open <url>");
+    return await this.action("Opened", `open ${url}`, async () => this.backend.open(url, { waitForSelector }));
+  }
+
+  private async action(label: string, actionDescription: string, execute: () => Promise<void>): Promise<string> {
+    await execute();
+    const snapshotLine = await this.snapshotAndPersist(actionDescription);
+    const checkLine = await this.maybeAutoCheck();
+    return `✓ ${label}.\n${snapshotLine}${checkLine}`;
+  }
+
+  private async snapshotAndPersist(actionDescription: string): Promise<string> {
+    const snapshot = await this.backend.snapshot();
+    await this.store.writeCurrent(snapshot);
+    const id = await this.store.writeHistory(snapshot);
+    await this.store.addFlowStep(actionDescription, actionDescription, id);
+    return `Snapshot ${id} written to /site/current and /site/history/${id}\n`;
+  }
+
+  private async maybeAutoCheck(): Promise<string> {
+    if (!this.options.config.autoCheckStatic && !this.options.config.autoCheckFull) return "";
+    try {
+      if (this.options.config.autoCheckFull) return await this.checkAll();
+      const snapshot = await this.store.readSnapshot("current");
+      const issues = runStaticChecks(snapshot);
+      if (!issues.length) return "";
+      return `\nAuto-check: ${issues.length} issue(s) detected.\n`;
+    } catch {
+      return "";
+    }
+  }
+
+  private probeLink(href: string) {
+    return this.backend.probeLink(href);
+  }
+
+  private async history(): Promise<string> {
+    const history = await this.store.listHistory();
+    return history.length ? `${history.join("\n")}\n` : "No history snapshots yet.\n";
+  }
+
+  private async current(): Promise<string> {
+    const snapshot = await this.store.readSnapshot("current");
+    return [
+      `URL: ${snapshot.url}`,
+      `Title: ${snapshot.title}`,
+      `Buttons: ${snapshot.buttons.length}`,
+      `Inputs: ${snapshot.inputs.length}`,
+      `Forms: ${snapshot.forms.length}`,
+      "Current files are under /site/current"
+    ].join("\n") + "\n";
+  }
+
+  private async diff(beforeIdArg: string | undefined, afterIdArg: string | undefined): Promise<string> {
+    let beforeId = beforeIdArg;
+    let afterId = afterIdArg;
+    if (beforeId === "latest" && afterId === undefined) {
+      const history = await this.store.listHistory();
+      if (history.length < 2) throw new Error("web diff latest requires at least two history snapshots.");
+      beforeId = history[history.length - 2];
+      afterId = history[history.length - 1];
+    }
+    beforeId = required(beforeId, "web diff <snapshot-a> <snapshot-b> or web diff latest");
+    afterId = required(afterId, "web diff <snapshot-a> <snapshot-b> or web diff latest");
+    return this.store.writeDiff(beforeId, afterId);
+  }
+
+  private async diffVisual(beforeIdArg: string | undefined, afterIdArg: string | undefined): Promise<string> {
+    let beforeId = beforeIdArg;
+    let afterId = afterIdArg;
+    if (beforeId === "latest" && afterId === undefined) {
+      const history = await this.store.listHistory();
+      if (history.length < 2) throw new Error("web diff-visual latest requires at least two history snapshots.");
+      beforeId = history[history.length - 2];
+      afterId = history[history.length - 1];
+    }
+    beforeId = required(beforeId, "web diff-visual <snapshot-a> <snapshot-b> or web diff-visual latest");
+    afterId = required(afterId, "web diff-visual <snapshot-a> <snapshot-b> or web diff-visual latest");
+
+    const beforeDir = this.store.path("history", beforeId);
+    const afterDir = this.store.path("history", afterId);
+    const [before, after] = await Promise.all([
+      this.store.readSnapshot(beforeId),
+      this.store.readSnapshot(afterId)
+    ]);
+    const result = await diffVisualFromPaths(beforeDir, afterDir);
+    await this.store.writeReport(`diff-visual-${beforeId}-${afterId}.md`, result.markdown);
+    if (result.diffPng) {
+      await writeFile(this.store.path("reports", `diff-visual-${beforeId}-${afterId}.png`), result.diffPng);
+    }
+    return `${result.markdown}Report written to /site/reports/diff-visual-${beforeId}-${afterId}.md\n`;
+  }
+
+  private async inspect(target: string): Promise<string> {
+    const snapshot = await this.store.readSnapshot("current");
+    const needle = target.toLowerCase();
+    const foundMatches = [
+      ...snapshot.buttons.filter((button) => matches(button.text, button.selector, needle)),
+      ...snapshot.inputs.filter((input) => matches(input.label, input.name, needle) || matches(input.selector, input.type, needle)),
+      ...snapshot.links.filter((link) => matches(link.text, link.href, needle)),
+      ...snapshot.forms.filter((form) => matches(form.name, form.selector, needle))
+    ];
+    return foundMatches.length ? `${JSON.stringify(foundMatches, null, 2)}\n` : `No current snapshot element matched "${target}".\n`;
+  }
+
+  private async savePage(name: string): Promise<string> {
+    await this.store.copyCurrentToPage(name);
+    return `Saved /site/current to /site/pages/${name}\n`;
+  }
+
+  private async checkConsoleErrors(): Promise<string> {
+    const issues = checkConsoleErrors(await this.store.readSnapshot("current"));
+    const report = renderIssueReport("Console Errors", issues);
+    await this.store.writeReport("console-errors.md", report);
+    return report;
+  }
+
+  private async checkBrokenLinks(allLinks: boolean): Promise<string> {
+    const snapshot = await this.store.readSnapshot("current");
+    const scope = allLinks ? "all" : this.options.config.linkScope;
+    const issues = await runAllChecks(snapshot, (href) => this.probeLink(href), {
+      linkScope: scope,
+      failOnWarnings: false
+    });
+    const linkIssues = issues.filter((i) => i.code === "broken-link" || i.code === "link-blocked");
+    const report = renderIssueReport("Broken Links", linkIssues);
+    await this.store.writeReport("broken-links.md", report);
+    return report;
+  }
+
+  private async checkA11y(): Promise<string> {
+    const snapshot = await this.store.readSnapshot("current");
+    const issues = [...checkA11y(snapshot), ...checkAxeViolations(snapshot)];
+    const report = renderIssueReport("Accessibility", issues);
+    await this.store.writeReport("accessibility.md", report);
+    return report;
+  }
+
+  private async checkForms(): Promise<string> {
+    const issues = checkForms(await this.store.readSnapshot("current"));
+    return renderIssueReport("Forms", issues);
+  }
+
+  private async checkButtons(): Promise<string> {
+    const issues = checkButtons(await this.store.readSnapshot("current"));
+    return renderIssueReport("Buttons", issues);
+  }
+
+  private async checkAll(): Promise<string> {
+    const snapshot = await this.store.readSnapshot("current");
+    const issues = await runAllChecks(snapshot, (href) => this.probeLink(href), {
+      linkScope: this.options.config.linkScope,
+      failOnWarnings: this.options.config.failOnWarnings
+    });
+    const report = renderIssueReport("All Checks", issues);
+    await this.store.writeReport("check-all.md", report);
+    await this.maybeOpenViewer(snapshot.url, issues.some((issue) => issue.severity === "error"));
+    return report;
+  }
+
+  private async report(): Promise<string> {
+    const snapshot = await this.store.readSnapshot("current");
+    const history = await this.store.listHistory();
+    const flow = await this.store.getActiveFlow();
+    const issues = await runAllChecks(snapshot, (href) => this.probeLink(href), {
+      linkScope: this.options.config.linkScope,
+      failOnWarnings: this.options.config.failOnWarnings
+    });
+    const qaReport = buildQAReport(snapshot, history, issues, flow?.name, {
+      failOnWarnings: this.options.config.failOnWarnings
+    });
+    const markdown = renderMarkdownReport(qaReport, snapshot);
+    const json = renderJsonReport(qaReport, snapshot);
+    await this.store.writeReport("qa-summary.md", markdown);
+    await this.store.writeReport("qa-summary.json", json);
+    return `${markdown}\nReports written to /site/reports/qa-summary.md and qa-summary.json\n`;
+  }
+
+  private async crawl(args: string[]): Promise<string> {
+    const maxPagesFlag = args.find((a) => a.startsWith("--max-pages="));
+    const maxPages = maxPagesFlag ? Number(maxPagesFlag.split("=")[1]) : this.options.config.crawlMaxPages;
+    const sameOriginOnly = !args.includes("--all-links");
+    const urlParts = args.filter((a) => !a.startsWith("--"));
+    const startUrl = urlParts[0];
+
+    if (startUrl) {
+      await this.backend.open(startUrl);
+      await this.snapshotAndPersist(`crawl open ${startUrl}`);
+    }
+
+    const manifest: CrawlManifest = {
+      startedAt: new Date().toISOString(),
+      startUrl: startUrl ?? (await this.store.readSnapshot("current")).url,
+      maxPages,
+      pages: []
+    };
+
+    const visited = new Set<string>();
+    const queue: string[] = [normalizeUrl(manifest.startUrl)];
+
+    while (queue.length > 0 && manifest.pages.length < maxPages) {
+      const url = queue.shift()!;
+      if (visited.has(url)) continue;
+      visited.add(url);
+
+      await this.backend.open(url);
+      await this.snapshotAndPersist(`crawl ${url}`);
+      const snapshot = await this.store.readSnapshot("current");
+      const history = await this.store.listHistory();
+      const snapshotId = history.at(-1);
+      const slug = pageSlugFromUrl(url, manifest.startUrl);
+      await this.store.copyCurrentToPage(slug);
+
+      const entry: CrawlManifestEntry = {
+        url: snapshot.url,
+        slug,
+        snapshotId,
+        title: snapshot.title
+      };
+      manifest.pages.push(entry);
+
+      for (const link of snapshot.links) {
+        if (!link.visible || !/^https?:\/\//i.test(link.href)) continue;
+        const normalized = normalizeUrl(link.href);
+        if (sameOriginOnly && !sameOrigin(manifest.startUrl, normalized)) continue;
+        if (!visited.has(normalized) && !queue.includes(normalized)) {
+          queue.push(normalized);
+        }
+      }
+
+      if (manifest.pages.length >= maxPages) break;
+    }
+
+    await this.store.writeCrawlManifest(manifest);
+    const summary = [
+      `Crawled ${manifest.pages.length} page(s).`,
+      ...manifest.pages.map((p) => `- ${p.slug}: ${p.url} (${p.title})`),
+      "",
+      "Manifest: /site/crawl/manifest.json"
+    ].join("\n");
+    return `${summary}\n`;
+  }
+
+  private async flow(args: string[]): Promise<string> {
+    const [subcommand, ...rest] = args;
+    switch (subcommand) {
+      case "start": {
+        const flow = await this.store.startFlow(required(rest[0], "web flow start <name>"));
+        return `Started flow "${flow.name}".\n`;
+      }
+      case "step": {
+        const description = required(rest.join(" "), "web flow step <description>");
+        const flow = await this.store.addFlowStep(description);
+        return flow ? `Recorded flow step ${flow.steps.length}.\n` : "No active flow. Run web flow start <name> first.\n";
+      }
+      case "end": {
+        const flow = await this.store.endFlow();
+        return flow ? `Ended flow "${flow.name}".\n` : "No active flow.\n";
+      }
+      case "report": {
+        const name = rest[0];
+        const flow = name ? await this.store.getFlow(name) : await this.store.getActiveFlow();
+        if (!flow) return name ? `No flow named "${name}" found under /site/flows.\n` : "No active flow. Run web flow report <name>, or inspect /site/flows.\n";
+        return this.store.writeFlowReport(flow);
+      }
+      default:
+        return "Usage: web flow start <name> | step <description> | end | report [name]\n";
+    }
+  }
+
+  private guard(text: string): string | null {
+    const danger = detectDangerousAction(text);
+    if (!danger) return null;
+    return [
+      `Approval required before interacting with "${text}".`,
+      `Reason: destructive or high-impact action detected (${danger}).`,
+      "MVP guardrails block this action; no bypass is available yet.",
+      ""
+    ].join("\n");
+  }
+
+  private async maybeOpenViewer(startUrl: string, failed: boolean): Promise<void> {
+    if (!this.options.openViewerOnCheckAll || !this.options.sessionRoot) return;
+    await finalizeAndOpenViewer({
+      sessionRoot: this.options.sessionRoot,
+      startUrl,
+      passed: !failed
+    });
+  }
+}
+
