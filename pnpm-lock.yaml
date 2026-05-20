@@ -29,9 +29,6 @@ importers:
       '@axe-core/playwright':
         specifier: ^4.10.2
         version: 4.11.3(playwright-core@1.60.0)
-      '@sitefs/axfs':
-        specifier: workspace:*
-        version: link:../axfs
       '@sitefs/sitefs':
         specifier: workspace:*
         version: link:../sitefs
@@ -50,9 +47,18 @@ importers:
       '@sitefs/browser':
         specifier: workspace:*
         version: link:../browser
+      '@sitefs/commands':
+        specifier: workspace:*
+        version: link:../commands
+      '@sitefs/live':
+        specifier: workspace:*
+        version: link:../live
       '@sitefs/qa':
         specifier: workspace:*
         version: link:../qa
+      '@sitefs/session':
+        specifier: workspace:*
+        version: link:../session
       '@sitefs/sitefs':
         specifier: workspace:*
         version: link:../sitefs
@@ -69,11 +75,46 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
 
+  packages/commands: {}
+
+  packages/live:
+    dependencies:
+      '@sitefs/axfs':
+        specifier: workspace:*
+        version: link:../axfs
+      '@sitefs/browser':
+        specifier: workspace:*
+        version: link:../browser
+      '@sitefs/commands':
+        specifier: workspace:*
+        version: link:../commands
+      '@sitefs/sitefs':
+        specifier: workspace:*
+        version: link:../sitefs
+
   packages/qa:
     dependencies:
       '@sitefs/sitefs':
         specifier: workspace:*
         version: link:../sitefs
+
+  packages/session:
+    dependencies:
+      '@sitefs/browser':
+        specifier: workspace:*
+        version: link:../browser
+      '@sitefs/live':
+        specifier: workspace:*
+        version: link:../live
+      '@sitefs/qa':
+        specifier: workspace:*
+        version: link:../qa
+      '@sitefs/sitefs':
+        specifier: workspace:*
+        version: link:../sitefs
+      '@sitefs/viewer':
+        specifier: workspace:*
+        version: link:../viewer
 
   packages/sitefs:
     dependencies:
