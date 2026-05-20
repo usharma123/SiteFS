@@ -1,0 +1,27 @@
+{
+  "name": "@sitefs/viewer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build && tsc -p tsconfig.server.json && tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.server.json --noEmit",
+    "dev": "node --import tsx server.ts",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "@pierre/diffs": "^1.1.22",
+    "@pierre/trees": "^1.0.0-beta.4",
+    "@sitefs/sitefs": "workspace:*",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.2",
+    "@types/react-dom": "^19.1.2",
+    "@vitejs/plugin-react": "^4.4.1",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5"
+  }
+}
